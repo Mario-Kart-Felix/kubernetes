@@ -23,8 +23,8 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 
-	"k8s.io/api/core/v1"
-	discovery "k8s.io/api/discovery/v1beta1"
+	v1 "k8s.io/api/core/v1"
+	discovery "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -134,6 +134,28 @@ func TestGetLocalEndpointIPs(t *testing.T) {
 			{Namespace: "ns2", Name: "ep2"}: sets.NewString("2.2.2.2", "2.2.2.22"),
 			{Namespace: "ns4", Name: "ep4"}: sets.NewString("4.4.4.4", "4.4.4.6"),
 		},
+	}, {
+		// Case[6]: all endpoints are terminating,, so getLocalReadyEndpointIPs should return 0 ready endpoints
+		endpointsMap: EndpointsMap{
+			makeServicePortName("ns1", "ep1", "p11", v1.ProtocolTCP): []Endpoint{
+				&BaseEndpointInfo{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: false, Serving: true, Terminating: true},
+			},
+			makeServicePortName("ns2", "ep2", "p22", v1.ProtocolTCP): []Endpoint{
+				&BaseEndpointInfo{Endpoint: "2.2.2.2:22", IsLocal: true, Ready: false, Serving: true, Terminating: true},
+				&BaseEndpointInfo{Endpoint: "2.2.2.22:22", IsLocal: true, Ready: false, Serving: true, Terminating: true},
+			},
+			makeServicePortName("ns2", "ep2", "p23", v1.ProtocolTCP): []Endpoint{
+				&BaseEndpointInfo{Endpoint: "2.2.2.3:23", IsLocal: true, Ready: false, Serving: true, Terminating: true},
+			},
+			makeServicePortName("ns4", "ep4", "p44", v1.ProtocolTCP): []Endpoint{
+				&BaseEndpointInfo{Endpoint: "4.4.4.4:44", IsLocal: true, Ready: false, Serving: true, Terminating: true},
+				&BaseEndpointInfo{Endpoint: "4.4.4.5:44", IsLocal: false, Ready: false, Serving: true, Terminating: true},
+			},
+			makeServicePortName("ns4", "ep4", "p45", v1.ProtocolTCP): []Endpoint{
+				&BaseEndpointInfo{Endpoint: "4.4.4.6:45", IsLocal: true, Ready: false, Serving: true, Terminating: true},
+			},
+		},
+		expected: make(map[types.NamespacedName]sets.String, 0),
 	}}
 
 	for tci, tc := range testCases {
@@ -194,7 +216,7 @@ func TestEndpointsToEndpointsMap(t *testing.T) {
 			}),
 			expected: map[ServicePortName][]*BaseEndpointInfo{
 				makeServicePortName("ns1", "ep1", "", v1.ProtocolTCP): {
-					{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: true, Serving: true, Terminating: false},
+					{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: true, Serving: true, Terminating: false, ZoneHints: sets.String{}},
 				},
 			},
 		},
@@ -218,7 +240,7 @@ func TestEndpointsToEndpointsMap(t *testing.T) {
 			}),
 			expected: map[ServicePortName][]*BaseEndpointInfo{
 				makeServicePortName("ns1", "ep1", "port", v1.ProtocolTCP): {
-					{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: true, Serving: true, Terminating: false},
+					{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: true, Serving: true, Terminating: false, ZoneHints: sets.String{}},
 				},
 			},
 		},
@@ -241,7 +263,7 @@ func TestEndpointsToEndpointsMap(t *testing.T) {
 			}),
 			expected: map[ServicePortName][]*BaseEndpointInfo{
 				makeServicePortName("ns1", "ep1", "", v1.ProtocolTCP): {
-					{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: true, Serving: true, Terminating: false},
+					{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: true, Serving: true, Terminating: false, ZoneHints: sets.String{}},
 				},
 			},
 		},
@@ -278,12 +300,12 @@ func TestEndpointsToEndpointsMap(t *testing.T) {
 			}),
 			expected: map[ServicePortName][]*BaseEndpointInfo{
 				makeServicePortName("ns1", "ep1", "p1", v1.ProtocolTCP): {
-					{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: true, Serving: true, Terminating: false},
-					{Endpoint: "2.2.2.2:11", IsLocal: false, Ready: true, Serving: true, Terminating: false},
+					{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: true, Serving: true, Terminating: false, ZoneHints: sets.String{}},
+					{Endpoint: "2.2.2.2:11", IsLocal: false, Ready: true, Serving: true, Terminating: false, ZoneHints: sets.String{}},
 				},
 				makeServicePortName("ns1", "ep1", "p2", v1.ProtocolTCP): {
-					{Endpoint: "1.1.1.1:22", IsLocal: false, Ready: true, Serving: true, Terminating: false},
-					{Endpoint: "2.2.2.2:22", IsLocal: false, Ready: true, Serving: true, Terminating: false},
+					{Endpoint: "1.1.1.1:22", IsLocal: false, Ready: true, Serving: true, Terminating: false, ZoneHints: sets.String{}},
+					{Endpoint: "2.2.2.2:22", IsLocal: false, Ready: true, Serving: true, Terminating: false, ZoneHints: sets.String{}},
 				},
 			},
 		},
@@ -307,7 +329,7 @@ func TestEndpointsToEndpointsMap(t *testing.T) {
 			}),
 			expected: map[ServicePortName][]*BaseEndpointInfo{
 				makeServicePortName("ns1", "ep1", "p1", v1.ProtocolTCP): {
-					{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: true, Serving: true, Terminating: false},
+					{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: true, Serving: true, Terminating: false, ZoneHints: sets.String{}},
 				},
 			},
 		},
@@ -331,7 +353,7 @@ func TestEndpointsToEndpointsMap(t *testing.T) {
 			}),
 			expected: map[ServicePortName][]*BaseEndpointInfo{
 				makeServicePortName("ns1", "ep1", "p2", v1.ProtocolTCP): {
-					{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: true, Serving: true, Terminating: false},
+					{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: true, Serving: true, Terminating: false, ZoneHints: sets.String{}},
 				},
 			},
 		},
@@ -355,7 +377,7 @@ func TestEndpointsToEndpointsMap(t *testing.T) {
 			}),
 			expected: map[ServicePortName][]*BaseEndpointInfo{
 				makeServicePortName("ns1", "ep1", "p1", v1.ProtocolTCP): {
-					{Endpoint: "1.1.1.1:22", IsLocal: false, Ready: true, Serving: true, Terminating: false},
+					{Endpoint: "1.1.1.1:22", IsLocal: false, Ready: true, Serving: true, Terminating: false, ZoneHints: sets.String{}},
 				},
 			},
 		},
@@ -385,10 +407,10 @@ func TestEndpointsToEndpointsMap(t *testing.T) {
 			}),
 			expected: map[ServicePortName][]*BaseEndpointInfo{
 				makeServicePortName("ns1", "ep1", "p1", v1.ProtocolTCP): {
-					{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: true, Serving: true, Terminating: false},
+					{Endpoint: "1.1.1.1:11", IsLocal: false, Ready: true, Serving: true, Terminating: false, ZoneHints: sets.String{}},
 				},
 				makeServicePortName("ns1", "ep1", "p2", v1.ProtocolTCP): {
-					{Endpoint: "1.1.1.1:22", IsLocal: false, Ready: true, Serving: true, Terminating: false},
+					{Endpoint: "1.1.1.1:22", IsLocal: false, Ready: true, Serving: true, Terminating: false, ZoneHints: sets.String{}},
 				},
 			},
 		},
@@ -418,10 +440,10 @@ func TestEndpointsToEndpointsMap(t *testing.T) {
 			}),
 			expected: map[ServicePortName][]*BaseEndpointInfo{
 				makeServicePortName("ns1", "ep1", "p1", v1.ProtocolTCP): {
-					{Endpoint: "[2001:db8:85a3:0:0:8a2e:370:7334]:11", IsLocal: false, Ready: true, Serving: true, Terminating: false},
+					{Endpoint: "[2001:db8:85a3:0:0:8a2e:370:7334]:11", IsLocal: false, Ready: true, Serving: true, Terminating: false, ZoneHints: sets.String{}},
 				},
 				makeServicePortName("ns1", "ep1", "p2", v1.ProtocolTCP): {
-					{Endpoint: "[2001:db8:85a3:0:0:8a2e:370:7334]:22", IsLocal: false, Ready: true, Serving: true, Terminating: false},
+					{Endpoint: "[2001:db8:85a3:0:0:8a2e:370:7334]:22", IsLocal: false, Ready: true, Serving: true, Terminating: false, ZoneHints: sets.String{}},
 				},
 			},
 		},
@@ -1294,7 +1316,7 @@ func TestUpdateEndpointsMap(t *testing.T) {
 
 	for tci, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			fp := newFakeProxier(v1.IPv4Protocol)
+			fp := newFakeProxier(v1.IPv4Protocol, time.Time{})
 			fp.hostname = nodeName
 
 			// First check that after adding all previous versions of endpoints,
@@ -1364,7 +1386,9 @@ func TestUpdateEndpointsMap(t *testing.T) {
 }
 
 func TestLastChangeTriggerTime(t *testing.T) {
-	t0 := time.Date(2018, 01, 01, 0, 0, 0, 0, time.UTC)
+	startTime := time.Date(2018, 01, 01, 0, 0, 0, 0, time.UTC)
+	t_1 := startTime.Add(-time.Second)
+	t0 := startTime.Add(time.Second)
 	t1 := t0.Add(time.Second)
 	t2 := t1.Add(time.Second)
 	t3 := t2.Add(time.Second)
@@ -1439,6 +1463,14 @@ func TestLastChangeTriggerTime(t *testing.T) {
 			expected: map[types.NamespacedName][]time.Time{},
 		},
 		{
+			name: "Endpoints create before tracker started",
+			scenario: func(fp *FakeProxier) {
+				e := createEndpoints("ns", "ep1", t_1)
+				fp.addEndpoints(e)
+			},
+			expected: map[types.NamespacedName][]time.Time{},
+		},
+		{
 			name: "addEndpoints then deleteEndpoints",
 			scenario: func(fp *FakeProxier) {
 				e := createEndpoints("ns", "ep1", t1)
@@ -1469,7 +1501,7 @@ func TestLastChangeTriggerTime(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		fp := newFakeProxier(v1.IPv4Protocol)
+		fp := newFakeProxier(v1.IPv4Protocol, startTime)
 
 		tc.scenario(fp)
 
@@ -1920,9 +1952,7 @@ func compareEndpointsMapsStr(t *testing.T, newMap EndpointsMap, expected map[Ser
 func newTestEp(ep, host string, ready, serving, terminating bool) *BaseEndpointInfo {
 	endpointInfo := &BaseEndpointInfo{Endpoint: ep, Ready: ready, Serving: serving, Terminating: terminating}
 	if host != "" {
-		endpointInfo.Topology = map[string]string{
-			"kubernetes.io/hostname": host,
-		}
+		endpointInfo.NodeName = host
 	}
 	return endpointInfo
 }

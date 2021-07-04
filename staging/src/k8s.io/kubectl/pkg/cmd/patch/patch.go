@@ -39,6 +39,7 @@ import (
 	"k8s.io/cli-runtime/pkg/resource"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
 	"k8s.io/kubectl/pkg/scheme"
+	"k8s.io/kubectl/pkg/util"
 	"k8s.io/kubectl/pkg/util/i18n"
 	"k8s.io/kubectl/pkg/util/templates"
 )
@@ -114,6 +115,7 @@ func NewCmdPatch(f cmdutil.Factory, ioStreams genericclioptions.IOStreams) *cobr
 		Short:                 i18n.T("Update field(s) of a resource"),
 		Long:                  patchLong,
 		Example:               patchExample,
+		ValidArgsFunction:     util.ResourceTypeAndNameCompletionFunc(f),
 		Run: func(cmd *cobra.Command, args []string) {
 			cmdutil.CheckErr(o.Complete(f, cmd, args))
 			cmdutil.CheckErr(o.Validate())
@@ -167,11 +169,7 @@ func (o *PatchOptions) Complete(f cmdutil.Factory, cmd *cobra.Command, args []st
 	if err != nil {
 		return err
 	}
-	discoveryClient, err := f.ToDiscoveryClient()
-	if err != nil {
-		return err
-	}
-	o.dryRunVerifier = resource.NewDryRunVerifier(dynamicClient, discoveryClient)
+	o.dryRunVerifier = resource.NewDryRunVerifier(dynamicClient, f.OpenAPIGetter())
 
 	return nil
 }
@@ -338,7 +336,7 @@ func getPatchedJSON(patchType types.PatchType, originalJS, patchJS []byte, gvk s
 		// get a typed object for this GVK if we need to apply a strategic merge patch
 		obj, err := creater.New(gvk)
 		if err != nil {
-			return nil, fmt.Errorf("cannot apply strategic merge patch for %s locally, try --type merge", gvk.String())
+			return nil, fmt.Errorf("strategic merge patch is not supported for %s locally, try --type merge", gvk.String())
 		}
 		return strategicpatch.StrategicMergePatch(originalJS, patchJS, obj)
 

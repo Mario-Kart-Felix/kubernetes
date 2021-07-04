@@ -84,6 +84,8 @@ type NodeClient struct {
 	stageUnstageSet          bool
 	expansionSet             bool
 	volumeStatsSet           bool
+	volumeConditionSet       bool
+	singleNodeMultiWriterSet bool
 	nodeGetInfoResp          *csipb.NodeGetInfoResponse
 	nodeVolumeStatsResp      *csipb.NodeGetVolumeStatsResponse
 	FakeNodeExpansionRequest *csipb.NodeExpandVolumeRequest
@@ -112,6 +114,23 @@ func NewNodeClientWithExpansion(stageUnstageSet bool, expansionSet bool) *NodeCl
 func NewNodeClientWithVolumeStats(volumeStatsSet bool) *NodeClient {
 	return &NodeClient{
 		volumeStatsSet: volumeStatsSet,
+	}
+}
+
+func NewNodeClientWithVolumeStatsAndCondition(volumeStatsSet, volumeConditionSet bool) *NodeClient {
+	return &NodeClient{
+		volumeStatsSet:     volumeStatsSet,
+		volumeConditionSet: volumeConditionSet,
+	}
+}
+
+func NewNodeClientWithSingleNodeMultiWriter(singleNodeMultiWriterSet bool) *NodeClient {
+	return &NodeClient{
+		nodePublishedVolumes:     make(map[string]CSIVolume),
+		nodeStagedVolumes:        make(map[string]CSIVolume),
+		stageUnstageSet:          true,
+		volumeStatsSet:           true,
+		singleNodeMultiWriterSet: singleNodeMultiWriterSet,
 	}
 }
 
@@ -342,6 +361,26 @@ func (f *NodeClient) NodeGetCapabilities(ctx context.Context, in *csipb.NodeGetC
 			Type: &csipb.NodeServiceCapability_Rpc{
 				Rpc: &csipb.NodeServiceCapability_RPC{
 					Type: csipb.NodeServiceCapability_RPC_GET_VOLUME_STATS,
+				},
+			},
+		})
+	}
+
+	if f.volumeConditionSet {
+		resp.Capabilities = append(resp.Capabilities, &csipb.NodeServiceCapability{
+			Type: &csipb.NodeServiceCapability_Rpc{
+				Rpc: &csipb.NodeServiceCapability_RPC{
+					Type: csipb.NodeServiceCapability_RPC_VOLUME_CONDITION,
+				},
+			},
+		})
+	}
+
+	if f.singleNodeMultiWriterSet {
+		resp.Capabilities = append(resp.Capabilities, &csipb.NodeServiceCapability{
+			Type: &csipb.NodeServiceCapability_Rpc{
+				Rpc: &csipb.NodeServiceCapability_RPC{
+					Type: csipb.NodeServiceCapability_RPC_SINGLE_NODE_MULTI_WRITER,
 				},
 			},
 		})

@@ -26,15 +26,17 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	"k8s.io/kubernetes/pkg/apis/certificates"
+	"k8s.io/client-go/util/certificate/csr"
 	capi "k8s.io/kubernetes/pkg/apis/certificates"
 	capiv1beta1 "k8s.io/kubernetes/pkg/apis/certificates/v1beta1"
 	"k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/utils/pointer"
 )
 
 var (
@@ -263,6 +265,74 @@ func TestValidateCertificateSigningRequestCreate(t *testing.T) {
 			},
 			errs: field.ErrorList{},
 		},
+		"negative duration": {
+			csr: capi.CertificateSigningRequest{
+				ObjectMeta: validObjectMeta,
+				Spec: capi.CertificateSigningRequestSpec{
+					Usages:            validUsages,
+					Request:           newCSRPEM(t),
+					SignerName:        validSignerName,
+					ExpirationSeconds: pointer.Int32(-1),
+				},
+			},
+			errs: field.ErrorList{
+				field.Invalid(specPath.Child("expirationSeconds"), int32(-1), "may not specify a duration less than 600 seconds (10 minutes)"),
+			},
+		},
+		"zero duration": {
+			csr: capi.CertificateSigningRequest{
+				ObjectMeta: validObjectMeta,
+				Spec: capi.CertificateSigningRequestSpec{
+					Usages:            validUsages,
+					Request:           newCSRPEM(t),
+					SignerName:        validSignerName,
+					ExpirationSeconds: pointer.Int32(0),
+				},
+			},
+			errs: field.ErrorList{
+				field.Invalid(specPath.Child("expirationSeconds"), int32(0), "may not specify a duration less than 600 seconds (10 minutes)"),
+			},
+		},
+		"one duration": {
+			csr: capi.CertificateSigningRequest{
+				ObjectMeta: validObjectMeta,
+				Spec: capi.CertificateSigningRequestSpec{
+					Usages:            validUsages,
+					Request:           newCSRPEM(t),
+					SignerName:        validSignerName,
+					ExpirationSeconds: pointer.Int32(1),
+				},
+			},
+			errs: field.ErrorList{
+				field.Invalid(specPath.Child("expirationSeconds"), int32(1), "may not specify a duration less than 600 seconds (10 minutes)"),
+			},
+		},
+		"too short duration": {
+			csr: capi.CertificateSigningRequest{
+				ObjectMeta: validObjectMeta,
+				Spec: capi.CertificateSigningRequestSpec{
+					Usages:            validUsages,
+					Request:           newCSRPEM(t),
+					SignerName:        validSignerName,
+					ExpirationSeconds: csr.DurationToExpirationSeconds(time.Minute),
+				},
+			},
+			errs: field.ErrorList{
+				field.Invalid(specPath.Child("expirationSeconds"), *csr.DurationToExpirationSeconds(time.Minute), "may not specify a duration less than 600 seconds (10 minutes)"),
+			},
+		},
+		"valid duration": {
+			csr: capi.CertificateSigningRequest{
+				ObjectMeta: validObjectMeta,
+				Spec: capi.CertificateSigningRequestSpec{
+					Usages:            validUsages,
+					Request:           newCSRPEM(t),
+					SignerName:        validSignerName,
+					ExpirationSeconds: csr.DurationToExpirationSeconds(10 * time.Minute),
+				},
+			},
+			errs: field.ErrorList{},
+		},
 		"missing usages": {
 			csr: capi.CertificateSigningRequest{
 				ObjectMeta: validObjectMeta,
@@ -357,8 +427,8 @@ func Test_getValidationOptions(t *testing.T) {
 	tests := []struct {
 		name    string
 		version schema.GroupVersion
-		newCSR  *certificates.CertificateSigningRequest
-		oldCSR  *certificates.CertificateSigningRequest
+		newCSR  *capi.CertificateSigningRequest
+		oldCSR  *capi.CertificateSigningRequest
 		want    certificateValidationOptions
 	}{
 		{
@@ -510,8 +580,8 @@ func TestValidateCertificateSigningRequestUpdate(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		newCSR      *certificates.CertificateSigningRequest
-		oldCSR      *certificates.CertificateSigningRequest
+		newCSR      *capi.CertificateSigningRequest
+		oldCSR      *capi.CertificateSigningRequest
 		versionErrs map[string][]string
 	}{
 		{
@@ -604,7 +674,7 @@ func TestValidateCertificateSigningRequestUpdate(t *testing.T) {
 		for _, version := range []string{"v1", "v1beta1"} {
 			t.Run(tt.name+"_"+version, func(t *testing.T) {
 				gotErrs := sets.NewString()
-				for _, err := range ValidateCertificateSigningRequestUpdate(tt.newCSR, tt.oldCSR, schema.GroupVersion{Group: certificates.GroupName, Version: version}) {
+				for _, err := range ValidateCertificateSigningRequestUpdate(tt.newCSR, tt.oldCSR, schema.GroupVersion{Group: capi.GroupName, Version: version}) {
 					gotErrs.Insert(err.Error())
 				}
 				wantErrs := sets.NewString(tt.versionErrs[version]...)
@@ -634,8 +704,8 @@ func TestValidateCertificateSigningRequestStatusUpdate(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		newCSR      *certificates.CertificateSigningRequest
-		oldCSR      *certificates.CertificateSigningRequest
+		newCSR      *capi.CertificateSigningRequest
+		oldCSR      *capi.CertificateSigningRequest
 		versionErrs map[string][]string
 	}{
 		{
@@ -760,7 +830,7 @@ func TestValidateCertificateSigningRequestStatusUpdate(t *testing.T) {
 		for _, version := range []string{"v1", "v1beta1"} {
 			t.Run(tt.name+"_"+version, func(t *testing.T) {
 				gotErrs := sets.NewString()
-				for _, err := range ValidateCertificateSigningRequestStatusUpdate(tt.newCSR, tt.oldCSR, schema.GroupVersion{Group: certificates.GroupName, Version: version}) {
+				for _, err := range ValidateCertificateSigningRequestStatusUpdate(tt.newCSR, tt.oldCSR, schema.GroupVersion{Group: capi.GroupName, Version: version}) {
 					gotErrs.Insert(err.Error())
 				}
 				wantErrs := sets.NewString(tt.versionErrs[version]...)
@@ -790,8 +860,8 @@ func TestValidateCertificateSigningRequestApprovalUpdate(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		newCSR      *certificates.CertificateSigningRequest
-		oldCSR      *certificates.CertificateSigningRequest
+		newCSR      *capi.CertificateSigningRequest
+		oldCSR      *capi.CertificateSigningRequest
 		versionErrs map[string][]string
 	}{
 		{
@@ -876,7 +946,7 @@ func TestValidateCertificateSigningRequestApprovalUpdate(t *testing.T) {
 		for _, version := range []string{"v1", "v1beta1"} {
 			t.Run(tt.name+"_"+version, func(t *testing.T) {
 				gotErrs := sets.NewString()
-				for _, err := range ValidateCertificateSigningRequestApprovalUpdate(tt.newCSR, tt.oldCSR, schema.GroupVersion{Group: certificates.GroupName, Version: version}) {
+				for _, err := range ValidateCertificateSigningRequestApprovalUpdate(tt.newCSR, tt.oldCSR, schema.GroupVersion{Group: capi.GroupName, Version: version}) {
 					gotErrs.Insert(err.Error())
 				}
 				wantErrs := sets.NewString(tt.versionErrs[version]...)
@@ -904,7 +974,7 @@ func Test_validateCertificateSigningRequestOptions(t *testing.T) {
 		name string
 
 		// csr being validated
-		csr *certificates.CertificateSigningRequest
+		csr *capi.CertificateSigningRequest
 
 		// options that allow the csr to pass validation
 		lenientOpts certificateValidationOptions

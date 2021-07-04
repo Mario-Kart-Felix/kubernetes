@@ -36,8 +36,10 @@ import (
 
 	"github.com/PuerkitoBio/purell"
 	"github.com/pkg/errors"
+	v1 "k8s.io/api/core/v1"
 	netutil "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/validation"
 	versionutil "k8s.io/apimachinery/pkg/util/version"
 	kubeadmversion "k8s.io/component-base/version"
 	"k8s.io/klog/v2"
@@ -222,14 +224,6 @@ func (IsPrivilegedUserCheck) Name() string {
 	return "IsPrivilegedUser"
 }
 
-// IsDockerSystemdCheck verifies if Docker is setup to use systemd as the cgroup driver.
-type IsDockerSystemdCheck struct{}
-
-// Name returns name for IsDockerSystemdCheck
-func (IsDockerSystemdCheck) Name() string {
-	return "IsDockerSystemdCheck"
-}
-
 // DirAvailableCheck checks if the given directory either does not exist, or is empty.
 type DirAvailableCheck struct {
 	Path  string
@@ -402,8 +396,12 @@ func (HostnameCheck) Name() string {
 }
 
 // Check validates if hostname match dns sub domain regex.
+// Check hostname length and format
 func (hc HostnameCheck) Check() (warnings, errorList []error) {
-	klog.V(1).Infoln("checking whether the given node name is reachable using net.LookupHost")
+	klog.V(1).Infoln("checking whether the given node name is valid and reachable using net.LookupHost")
+	for _, msg := range validation.IsQualifiedName(hc.nodeName) {
+		warnings = append(warnings, errors.Errorf("invalid node name format %q: %s", hc.nodeName, msg))
+	}
 
 	addr, err := net.LookupHost(hc.nodeName)
 	if addr == nil {
@@ -822,8 +820,9 @@ func getEtcdVersionResponse(client *http.Client, url string, target interface{})
 
 // ImagePullCheck will pull container images used by kubeadm
 type ImagePullCheck struct {
-	runtime   utilruntime.ContainerRuntime
-	imageList []string
+	runtime         utilruntime.ContainerRuntime
+	imageList       []string
+	imagePullPolicy v1.PullPolicy
 }
 
 // Name returns the label for ImagePullCheck
@@ -833,18 +832,35 @@ func (ImagePullCheck) Name() string {
 
 // Check pulls images required by kubeadm. This is a mutating check
 func (ipc ImagePullCheck) Check() (warnings, errorList []error) {
+	policy := ipc.imagePullPolicy
+	if len(policy) == 0 {
+		policy = v1.PullIfNotPresent // Default behavior if the policy is unset
+	}
+	klog.V(1).Infof("using image pull policy: %s", policy)
 	for _, image := range ipc.imageList {
-		ret, err := ipc.runtime.ImageExists(image)
-		if ret && err == nil {
-			klog.V(1).Infof("image exists: %s", image)
+		switch policy {
+		case v1.PullNever:
+			klog.V(1).Infof("skipping pull of image: %s", image)
 			continue
-		}
-		if err != nil {
-			errorList = append(errorList, errors.Wrapf(err, "failed to check if image %s exists", image))
-		}
-		klog.V(1).Infof("pulling %s", image)
-		if err := ipc.runtime.PullImage(image); err != nil {
-			errorList = append(errorList, errors.Wrapf(err, "failed to pull image %s", image))
+		case v1.PullIfNotPresent:
+			ret, err := ipc.runtime.ImageExists(image)
+			if ret && err == nil {
+				klog.V(1).Infof("image exists: %s", image)
+				continue
+			}
+			if err != nil {
+				errorList = append(errorList, errors.Wrapf(err, "failed to check if image %s exists", image))
+			}
+			fallthrough // Proceed with pulling the image if it does not exist
+		case v1.PullAlways:
+			klog.V(1).Infof("pulling: %s", image)
+			if err := ipc.runtime.PullImage(image); err != nil {
+				errorList = append(errorList, errors.Wrapf(err, "failed to pull image %s", image))
+			}
+		default:
+			// If the policy is unknown return early with an error
+			errorList = append(errorList, errors.Errorf("unsupported pull policy %q", policy))
+			return warnings, errorList
 		}
 	}
 	return warnings, errorList
@@ -1015,10 +1031,6 @@ func addCommonChecks(execer utilsexec.Interface, k8sVersion string, nodeReg *kub
 		if containerRuntime.IsDocker() {
 			isDocker = true
 			checks = append(checks, ServiceCheck{Service: "docker", CheckIfActive: true})
-			// Linux only
-			// TODO: support other CRIs for this check eventually
-			// https://github.com/kubernetes/kubeadm/issues/874
-			checks = append(checks, IsDockerSystemdCheck{})
 		}
 	}
 
@@ -1068,7 +1080,7 @@ func RunPullImagesCheck(execer utilsexec.Interface, cfg *kubeadmapi.InitConfigur
 	}
 
 	checks := []Checker{
-		ImagePullCheck{runtime: containerRuntime, imageList: images.GetControlPlaneImages(&cfg.ClusterConfiguration)},
+		ImagePullCheck{runtime: containerRuntime, imageList: images.GetControlPlaneImages(&cfg.ClusterConfiguration), imagePullPolicy: cfg.NodeRegistration.ImagePullPolicy},
 	}
 	return RunChecks(checks, os.Stderr, ignorePreflightErrors)
 }

@@ -22,6 +22,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	componentbaseconfig "k8s.io/component-base/config"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 )
 
@@ -60,6 +61,9 @@ func TestValidateKubeletConfiguration(t *testing.T) {
 		FeatureGates: map[string]bool{
 			"CustomCPUCFSQuotaPeriod": true,
 			"GracefulNodeShutdown":    true,
+		},
+		Logging: componentbaseconfig.LoggingConfiguration{
+			Format: "text",
 		},
 	}
 	if allErrors := ValidateKubeletConfiguration(successCase1); allErrors != nil {
@@ -100,10 +104,56 @@ func TestValidateKubeletConfiguration(t *testing.T) {
 		ShutdownGracePeriodCriticalPods: metav1.Duration{Duration: 0},
 		FeatureGates: map[string]bool{
 			"CustomCPUCFSQuotaPeriod": true,
-			"GracefulNodeShutdown":    true,
+		},
+		Logging: componentbaseconfig.LoggingConfiguration{
+			Format: "text",
 		},
 	}
 	if allErrors := ValidateKubeletConfiguration(successCase2); allErrors != nil {
+		t.Errorf("expect no errors, got %v", allErrors)
+	}
+
+	successCase3 := &kubeletconfig.KubeletConfiguration{
+		CgroupsPerQOS:                   true,
+		EnforceNodeAllocatable:          []string{"pods"},
+		SystemReservedCgroup:            "",
+		KubeReservedCgroup:              "",
+		SystemCgroups:                   "",
+		CgroupRoot:                      "",
+		EventBurst:                      10,
+		EventRecordQPS:                  5,
+		HealthzPort:                     10248,
+		ImageGCHighThresholdPercent:     85,
+		ImageGCLowThresholdPercent:      80,
+		IPTablesDropBit:                 15,
+		IPTablesMasqueradeBit:           14,
+		KubeAPIBurst:                    10,
+		KubeAPIQPS:                      5,
+		MaxOpenFiles:                    1000000,
+		MaxPods:                         110,
+		OOMScoreAdj:                     -999,
+		PodsPerCore:                     100,
+		Port:                            65535,
+		ReadOnlyPort:                    0,
+		RegistryBurst:                   10,
+		RegistryPullQPS:                 5,
+		HairpinMode:                     kubeletconfig.PromiscuousBridge,
+		NodeLeaseDurationSeconds:        1,
+		CPUCFSQuotaPeriod:               metav1.Duration{Duration: 50 * time.Millisecond},
+		ReservedSystemCPUs:              "0-3",
+		TopologyManagerScope:            kubeletconfig.ContainerTopologyManagerScope,
+		TopologyManagerPolicy:           kubeletconfig.NoneTopologyManagerPolicy,
+		ShutdownGracePeriod:             metav1.Duration{Duration: 10 * time.Minute},
+		ShutdownGracePeriodCriticalPods: metav1.Duration{Duration: 0},
+		FeatureGates: map[string]bool{
+			"CustomCPUCFSQuotaPeriod": true,
+			"GracefulNodeShutdown":    true,
+		},
+		Logging: componentbaseconfig.LoggingConfiguration{
+			Format: "text",
+		},
+	}
+	if allErrors := ValidateKubeletConfiguration(successCase3); allErrors != nil {
 		t.Errorf("expect no errors, got %v", allErrors)
 	}
 
@@ -133,9 +183,12 @@ func TestValidateKubeletConfiguration(t *testing.T) {
 		NodeLeaseDurationSeconds:        -1,
 		CPUCFSQuotaPeriod:               metav1.Duration{Duration: 100 * time.Millisecond},
 		ShutdownGracePeriod:             metav1.Duration{Duration: 30 * time.Second},
-		ShutdownGracePeriodCriticalPods: metav1.Duration{Duration: 10 * time.Second},
+		ShutdownGracePeriodCriticalPods: metav1.Duration{Duration: 60 * time.Second},
+		Logging: componentbaseconfig.LoggingConfiguration{
+			Format: "",
+		},
 	}
-	const numErrsErrorCase1 = 28
+	const numErrsErrorCase1 = 29
 	if allErrors := ValidateKubeletConfiguration(errorCase1); len(allErrors.(utilerrors.Aggregate).Errors()) != numErrsErrorCase1 {
 		t.Errorf("expect %d errors, got %v", numErrsErrorCase1, len(allErrors.(utilerrors.Aggregate).Errors()))
 	}
@@ -175,6 +228,9 @@ func TestValidateKubeletConfiguration(t *testing.T) {
 		FeatureGates: map[string]bool{
 			"CustomCPUCFSQuotaPeriod": true,
 			"GracefulNodeShutdown":    true,
+		},
+		Logging: componentbaseconfig.LoggingConfiguration{
+			Format: "text",
 		},
 	}
 	const numErrsErrorCase2 = 3

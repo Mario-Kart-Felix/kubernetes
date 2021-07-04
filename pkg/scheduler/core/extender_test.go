@@ -267,12 +267,11 @@ func TestGenericSchedulerWithExtenders(t *testing.T) {
 			for _, name := range test.nodes {
 				cache.AddNode(createNode(name))
 			}
-
 			fwk, err := st.NewFramework(
-				test.registerPlugins,
+				test.registerPlugins, "",
 				runtime.WithClientSet(client),
 				runtime.WithInformerFactory(informerFactory),
-				runtime.WithPodNominator(internalqueue.NewPodNominator()),
+				runtime.WithPodNominator(internalqueue.NewPodNominator(informerFactory.Core().V1().Pods().Lister())),
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -281,10 +280,9 @@ func TestGenericSchedulerWithExtenders(t *testing.T) {
 			scheduler := NewGenericScheduler(
 				cache,
 				emptySnapshot,
-				extenders,
 				schedulerapi.DefaultPercentageOfNodesToScore)
 			podIgnored := &v1.Pod{}
-			result, err := scheduler.Schedule(context.Background(), fwk, framework.NewCycleState(), podIgnored)
+			result, err := scheduler.Schedule(context.Background(), extenders, fwk, framework.NewCycleState(), podIgnored)
 			if test.expectsErr {
 				if err == nil {
 					t.Errorf("Unexpected non-error, result %+v", result)

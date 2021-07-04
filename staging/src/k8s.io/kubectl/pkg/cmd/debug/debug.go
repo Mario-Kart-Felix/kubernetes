@@ -18,6 +18,7 @@ package debug
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -31,7 +32,9 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/resource"
@@ -272,8 +275,17 @@ func (o *DebugOptions) Validate(cmd *cobra.Command) error {
 	}
 
 	// TargetContainer
-	if len(o.TargetContainer) > 0 && len(o.CopyTo) > 0 {
-		return fmt.Errorf("--target is incompatible with --copy-to. Use --share-processes instead.")
+	if len(o.TargetContainer) > 0 {
+		if len(o.CopyTo) > 0 {
+			return fmt.Errorf("--target is incompatible with --copy-to. Use --share-processes instead.")
+		}
+		if !o.Quiet {
+			// If the runtime doesn't support container namespace targeting this will fail silently, which has caused
+			// some confusion (ex: https://issues.k8s.io/98362), so print a warning. This can be removed when
+			// EphemeralContainers are generally available.
+			fmt.Fprintf(o.Out, "Targeting container %q. If you don't see processes from this container it may be because the container runtime doesn't support this feature.\n", o.TargetContainer)
+			// TODO(verb): Add a list of supported container runtimes to https://kubernetes.io/docs/concepts/workloads/pods/ephemeral-containers/ and then link here.
+		}
 	}
 
 	// TTY
@@ -381,26 +393,39 @@ func (o *DebugOptions) visitPod(ctx context.Context, pod *corev1.Pod) (*corev1.P
 
 // debugByEphemeralContainer runs an EphemeralContainer in the target Pod for use as a debug container
 func (o *DebugOptions) debugByEphemeralContainer(ctx context.Context, pod *corev1.Pod) (*corev1.Pod, string, error) {
-	pods := o.podClient.Pods(pod.Namespace)
-	ec, err := pods.GetEphemeralContainers(ctx, pod.Name, metav1.GetOptions{})
+	klog.V(2).Infof("existing ephemeral containers: %v", pod.Spec.EphemeralContainers)
+	podJS, err := json.Marshal(pod)
 	if err != nil {
-		// The pod has already been fetched at this point, so a NotFound error indicates the ephemeralcontainers subresource wasn't found.
-		if serr, ok := err.(*errors.StatusError); ok && serr.Status().Reason == metav1.StatusReasonNotFound {
+		return nil, "", fmt.Errorf("error creating JSON for pod: %v", err)
+	}
+
+	debugContainer := o.generateDebugContainer(pod)
+	klog.V(2).Infof("new ephemeral container: %#v", debugContainer)
+	debugPod := pod.DeepCopy()
+	debugPod.Spec.EphemeralContainers = append(debugPod.Spec.EphemeralContainers, *debugContainer)
+	debugJS, err := json.Marshal(debugPod)
+	if err != nil {
+		return nil, "", fmt.Errorf("error creating JSON for debug container: %v", err)
+	}
+
+	patch, err := strategicpatch.CreateTwoWayMergePatch(podJS, debugJS, pod)
+	if err != nil {
+		return nil, "", fmt.Errorf("error creating patch to add debug container: %v", err)
+	}
+	klog.V(2).Infof("generated strategic merge patch for debug container: %s", patch)
+
+	pods := o.podClient.Pods(pod.Namespace)
+	result, err := pods.Patch(ctx, pod.Name, types.StrategicMergePatchType, patch, metav1.PatchOptions{}, "ephemeralcontainers")
+	if err != nil {
+		// The apiserver will return a 404 when the EphemeralContainers feature is disabled because the `/ephemeralcontainers` subresource
+		// is missing. Unlike the 404 returned by a missing pod, the status details will be empty.
+		if serr, ok := err.(*errors.StatusError); ok && serr.Status().Reason == metav1.StatusReasonNotFound && serr.ErrStatus.Details.Name == "" {
 			return nil, "", fmt.Errorf("ephemeral containers are disabled for this cluster (error from server: %q).", err)
 		}
 		return nil, "", err
 	}
-	klog.V(2).Infof("existing ephemeral containers: %v", ec.EphemeralContainers)
 
-	debugContainer := o.generateDebugContainer(pod)
-	klog.V(2).Infof("new ephemeral container: %#v", debugContainer)
-	ec.EphemeralContainers = append(ec.EphemeralContainers, *debugContainer)
-	_, err = pods.UpdateEphemeralContainers(ctx, pod.Name, ec, metav1.UpdateOptions{})
-	if err != nil {
-		return nil, "", fmt.Errorf("error updating ephemeral containers: %v", err)
-	}
-
-	return pod, debugContainer.Name, nil
+	return result, debugContainer.Name, nil
 }
 
 // debugByCopy runs a copy of the target Pod with a debug container added or an original container modified
